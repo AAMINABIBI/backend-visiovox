@@ -57,7 +57,7 @@ async def predict(file: UploadFile = File(...)):
 
     unique_id = str(uuid.uuid4())
     
-    # Initialize ALL variables at the start to prevent UnboundLocalError
+    # Initialize all variables at the start
     video_path = None
     video_copy_path = None
     audio_path = None
@@ -92,7 +92,7 @@ async def predict(file: UploadFile = File(...)):
             logger.info(f"Prediction completed: {prediction}")
         except Exception as e:
             logger.error(f"Prediction failed: {str(e)}")
-            # Use fallback prediction instead of failing
+            # Use fallback prediction
             prediction = "HELLO WORLD"
             logger.info(f"Using fallback prediction: {prediction}")
 
@@ -120,56 +120,45 @@ async def predict(file: UploadFile = File(...)):
             
             video = VideoFileClip(video_copy_path)
             
-            # Create text clip with better error handling
+            # Create text clip with error handling
             try:
-                # Use a simple text clip without complex formatting
                 txt_clip = TextClip(
                     str(prediction), 
-                    fontsize=30, 
-                    color='white',
-                    font='Arial-Bold'  # Use a standard font
+                    fontsize=24, 
+                    color='white', 
+                    bg_color='black',
+                    size=(video.w, None)
                 ).set_position(('center', 'bottom')).set_duration(video.duration)
-                
-                logger.info("Text clip created successfully")
-                
             except Exception as text_error:
                 logger.warning(f"TextClip creation failed: {text_error}")
-                # Even simpler fallback
-                try:
-                    txt_clip = TextClip(
-                        str(prediction), 
-                        fontsize=24, 
-                        color='white'
-                    ).set_position('bottom').set_duration(video.duration)
-                except Exception as fallback_error:
-                    logger.error(f"Fallback text clip also failed: {fallback_error}")
-                    txt_clip = None
+                # Simple text overlay fallback
+                txt_clip = TextClip(
+                    str(prediction), 
+                    fontsize=20, 
+                    color='white'
+                ).set_position(('center', 'bottom')).set_duration(video.duration)
             
             # Composite video
-            if txt_clip is not None:
-                final_video = CompositeVideoClip([video, txt_clip])
-            else:
-                final_video = video  # Use video without text overlay
+            final_video = CompositeVideoClip([video, txt_clip])
             
             # Add audio
             audio_clip = AudioFileClip(audio_path)
             final_video = final_video.set_audio(audio_clip)
             
-            # Write final video with better error handling
+            # Write final video
             final_video.write_videofile(
                 output_video_path, 
                 codec="libx264", 
                 audio_codec="aac",
                 verbose=False,
                 logger=None,
-                temp_audiofile=f'temp-audio-{unique_id}.m4a',
+                temp_audiofile='temp-audio.m4a',
                 remove_temp=True
             )
             
             # Clean up clips
             video.close()
-            if txt_clip:
-                txt_clip.close()
+            txt_clip.close()
             audio_clip.close()
             final_video.close()
             
@@ -198,21 +187,20 @@ async def predict(file: UploadFile = File(...)):
         logger.error(f"Unexpected error during prediction: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     finally:
-        # Clean up temporary files with proper error handling
+        # Clean up temporary files
         for temp_file in temp_files:
             if temp_file and os.path.exists(temp_file):
-                retries = 3  # Reduced retries
+                retries = 5
                 for attempt in range(retries):
                     try:
                         os.remove(temp_file)
                         logger.info(f"Removed temporary file: {temp_file}")
                         break
                     except PermissionError:
-                        if attempt < retries - 1:  # Don't log on last attempt
-                            logger.warning(f"Attempt {attempt + 1}/{retries}: Failed to delete {temp_file}. Retrying...")
-                            time.sleep(1)  # Reduced wait time
+                        logger.warning(f"Attempt {attempt + 1}/{retries}: Failed to delete {temp_file}. Retrying...")
+                        time.sleep(2)
                 else:
-                    logger.warning(f"Could not remove temporary file: {temp_file} (file may be in use)")
+                    logger.error(f"Failed to remove temporary file after {retries} attempts: {temp_file}")
 
 @app.get("/outputs/{filename}")
 async def get_output_file(filename: str):
