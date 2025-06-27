@@ -69,7 +69,7 @@ def transformation_from_points(points1, points2):
     ])
 
 def extract_lip_coordinates(detector, predictor, img_path):
-    """Extract lip coordinates using dlib (fallback when face_alignment not available)"""
+    """Extract ONLY lip coordinates (20 points) using dlib"""
     image = cv2.imread(img_path)
     image = cv2.resize(image, (600, 500))
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -77,21 +77,21 @@ def extract_lip_coordinates(detector, predictor, img_path):
     rects = detector(gray)
     
     if len(rects) == 0:
-        # Return dummy coordinates if no face detected
+        # Return dummy coordinates for 20 lip points if no face detected
         return [np.zeros(20).tolist(), np.zeros(20).tolist()]
     
     for rect in rects:
         shape = predictor(gray, rect)
         x = []
         y = []
-        # Extract lip landmarks (48-67)
+        # Extract ONLY lip landmarks (48-67) = 20 points
         for n in range(48, 68):
             x.append(shape.part(n).x)
             y.append(shape.part(n).y)
         return [x, y]
 
 def generate_lip_coordinates(frame_images_directory, detector, predictor):
-    """Generate lip coordinates for all frames"""
+    """Generate lip coordinates for all frames - ONLY 20 points per frame"""
     frames = glob.glob(frame_images_directory + "/*.jpg")
     frames.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
 
@@ -106,33 +106,31 @@ def generate_lip_coordinates(frame_images_directory, detector, predictor):
     for frame in frames:
         x_coords, y_coords = extract_lip_coordinates(detector, predictor, frame)
         normalized_coords = []
+        # Process exactly 20 lip points
         for x, y in zip(x_coords, y_coords):
             normalized_x = x / width
             normalized_y = y / height
             normalized_coords.append((normalized_x, normalized_y))
         coords.append(normalized_coords)
     
-    coords_array = np.array(coords, dtype=np.float32)
+    coords_array = np.array(coords, dtype=np.float32)  # Shape: (T, 20, 2)
     coords_tensor = torch.from_numpy(coords_array)
+    
+    logger.info(f"Generated coordinates shape: {coords_tensor.shape}")
     return coords_tensor
 
 def load_video(video_path: str, device: str = "cpu"):
-    """Load video following the original implementation"""
-    # Create samples directory
-    if not os.path.exists("samples"):
-        os.makedirs("samples")
-
-    samples_dir = "samples"
+    """Load video with proper coordinate handling"""
+    # Create temporary directory for this processing
+    temp_dir = tempfile.mkdtemp()
+    samples_dir = os.path.join(temp_dir, "samples")
+    os.makedirs(samples_dir, exist_ok=True)
     
     try:
-        # Clear existing frames
-        for f in glob.glob(os.path.join(samples_dir, "*.jpg")):
-            os.remove(f)
-        
         output_pattern = os.path.join(samples_dir, "%04d.jpg")
         cmd = f'ffmpeg -hide_banner -loglevel error -i "{video_path}" -qscale:v 2 -r 25 "{output_pattern}"'
         
-        logger.info("Executing ffmpeg command")
+        logger.info(f"Executing ffmpeg command: {cmd}")
         process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         if process.returncode != 0:
@@ -208,8 +206,6 @@ def load_video(video_path: str, device: str = "cpu"):
                     img = img[y - w // 2 : y + w // 2, x - w : x + w, ...]
                     img = cv2.resize(img, (128, 64))
                     video_frames.append(img)
-                    
-                    logger.info(f"Successfully processed frame {i + 1}")
                 else:
                     logger.warning(f"No face detected in frame {i + 1}")
                     # Use previous frame or create dummy
@@ -235,19 +231,23 @@ def load_video(video_path: str, device: str = "cpu"):
         video_array = np.stack(video_frames, axis=0).astype(np.float32)
         video_tensor = torch.FloatTensor(video_array.transpose(3, 0, 1, 2)) / 255.0
         
-        # Generate lip coordinates
+        # Generate lip coordinates - THIS SHOULD RETURN (T, 20, 2)
         coords_tensor = generate_lip_coordinates(samples_dir, detector, predictor)
         
         logger.info(f"Video tensor shape: {video_tensor.shape}")
         logger.info(f"Coords tensor shape: {coords_tensor.shape}")
         
+        # Verify coordinate dimensions
+        if coords_tensor.shape[-1] != 2 or coords_tensor.shape[-2] != 20:
+            logger.error(f"Invalid coordinate shape: {coords_tensor.shape}, expected (T, 20, 2)")
+            raise ValueError(f"Invalid coordinate dimensions: {coords_tensor.shape}")
+        
         return video_tensor, coords_tensor
         
     finally:
-        # Clean up samples directory
+        # Clean up temporary directory
         try:
-            for f in glob.glob(os.path.join(samples_dir, "*.jpg")):
-                os.remove(f)
+            shutil.rmtree(temp_dir, ignore_errors=True)
         except:
             pass
 
@@ -269,7 +269,7 @@ def predict_lip_reading(video_path: str, weights_path: str, device: str = "cpu",
     try:
         # Load model
         model = LipCoordNet()
-        checkpoint = torch.load(weights_path, map_location=torch.device(device), weights_only=True)
+        checkpoint = torch.load(weights_path, map_location=torch.device(device), weights_only=False)
         model.load_state_dict(checkpoint)
         model = model.to(device)
         model.eval()
@@ -285,6 +285,14 @@ def predict_lip_reading(video_path: str, weights_path: str, device: str = "cpu",
         
         logger.info(f"Final video shape: {video.shape}")
         logger.info(f"Final coords shape: {coords.shape}")
+        
+        # Verify input dimensions before model inference
+        expected_coord_features = 40  # 20 points * 2 coordinates = 40 features
+        actual_coord_features = coords.shape[-2] * coords.shape[-1]  # Should be 20 * 2 = 40
+        
+        if actual_coord_features != expected_coord_features:
+            logger.error(f"Coordinate feature mismatch: expected {expected_coord_features}, got {actual_coord_features}")
+            raise ValueError(f"Coordinate dimension error: {coords.shape}")
         
         # Run inference
         with torch.no_grad():
