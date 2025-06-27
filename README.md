@@ -107,3 +107,7 @@ Assael, Y., Shillingford, B., Whiteson, S., & Freitas, N. (2017). LipNet: End-to
 ## Contact
 
 Project Link: https://github.com/ffeew/LipCoordNet
+<<<<<<< HEAD
+=======
+"# backend-visiovox" 
+>>>>>>> bf1e5f81546bf7d0fba6fe2a24b5d48388633db9

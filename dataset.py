@@ -2,7 +2,10 @@ import numpy as np
 import cv2
 import os
 from torch.utils.data import Dataset
+<<<<<<< HEAD
 from cvtransforms import *
+=======
+>>>>>>> bf1e5f81546bf7d0fba6fe2a24b5d48388633db9
 import torch
 import editdistance
 import json
