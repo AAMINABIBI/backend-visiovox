@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ['python310', 'cmake', 'gcc', 'pkg-config']
+
+[phases.install]
+cmds = ['pip install -r requirements_railway.txt']
+
+[start]
+cmd = 'python api.py'
